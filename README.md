@@ -6,9 +6,37 @@ Service สำหรับจำกัดวงเงินการใช้ AI
 
 ## Flow
 
-1. ก่อนเรียก AI — supervisor เรียก `GET /credit/{owner_id}` ถ้า `allowed = false` ให้ block
-2. เรียก AI แล้วคิดเงินเป็นบาท
-3. หลังเรียก AI — supervisor เรียก `POST /credit/deduct` เพื่อตัดเครดิต
+```mermaid
+sequenceDiagram
+    actor U as Owner/User
+    participant S as Supervisor
+    participant C as Credit Service
+    participant DB as PostgreSQL
+    participant AI
+
+    U->>S: ใช้งาน AI
+    S->>C: GET /credit/{owner_id}
+    C->>DB: อ่าน used ของวันนี้ (ไม่มี row = 0)
+    DB-->>C: used
+    C-->>S: {remaining, allowed}
+
+    alt allowed = false (remaining < 1)
+        S-->>U: เครดิตวันนี้หมด
+    else allowed = true
+        S->>AI: เรียก AI
+        AI-->>S: ผลลัพธ์
+        S->>S: คิดเงิน (cost)
+        S->>C: POST /credit/deduct {request_id, owner_id, cost}
+        C->>DB: insert request_id (log)
+        alt request_id ซ้ำ (retry)
+            C-->>S: {duplicate: true} ไม่ตัดซ้ำ
+        else request ใหม่
+            C->>DB: used = used + cost
+            C-->>S: {duplicate: false, remaining, allowed}
+        end
+        S-->>U: ผลลัพธ์ AI
+    end
+```
 
 - เครดิตรีเซ็ตอัตโนมัติทุกเที่ยงคืนเวลาไทย (Asia/Bangkok) ไม่ต้องมี cron
 - owner ใหม่ใช้ได้ทันที ไม่ต้องลงทะเบียน (owner ที่ไม่เคยใช้ = ใช้ไป 0 บาท)
